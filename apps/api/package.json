@@ -1,0 +1,26 @@
+{
+  "name": "@siv/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@siv/shared": "0.1.0",
+    "cors": "2.8.5",
+    "dotenv": "17.2.3",
+    "express": "5.3.0",
+    "ioredis": "6.0.0",
+    "mongoose": "9.11.4",
+    "pino": "10.4.0",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/cors": "2.8.19",
+    "@types/express": "5.0.6"
+  }
+}

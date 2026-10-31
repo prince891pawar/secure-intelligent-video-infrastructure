@@ -1,0 +1,36 @@
+{
+  "name": "secure-intelligent-video-infrastructure",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev --workspace @siv/web",
+    "dev:api": "npm run dev --workspace @siv/api",
+    "dev:worker": "npm run dev --workspace @siv/worker",
+    "build": "npm run build --workspace @siv/shared && npm run build --workspace @siv/api && npm run build --workspace @siv/worker && npm run build --workspace @siv/web",
+    "typecheck": "npm run typecheck --workspace @siv/shared && npm run typecheck --workspace @siv/api && npm run typecheck --workspace @siv/worker && npm run typecheck --workspace @siv/web",
+    "lint": "eslint .",
+    "test": "npm run test --workspace @siv/api"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "26.6.6",
+    "eslint": "10.14.0",
+    "globals": "17.13.0",
+    "tsx": "4.20.6",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.72.1",
+    "vitest": "5.0.5"
+  },
+  "overrides": {
+    "minimatch": "11.0.1"
+  },
+  "engines": {
+    "node": ">=22.12.0",
+    "npm": ">=10.9.0"
+  }
+}
