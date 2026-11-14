@@ -8,7 +8,6 @@ import { z } from "zod";
 import { createVideoProcessor, reconcileQueuedVideos, recoverStaleVideos } from "./media/video-processor.js";
 import { createIntelligenceProcessor, reconcileQueuedIntelligence } from "./media/intelligence-processor.js";
 import { WorkerStorage } from "./storage/worker-storage.js";
-import { connectWithBoundedRetries } from "./runtime/connection.js";
 
 dotenv.config({ path: resolve(process.cwd(), "../../.env") });
 
@@ -47,6 +46,32 @@ const env = z.object({
 }).parse(process.env);
 
 const logger = pino({ level: env.LOG_LEVEL });
+const redactSensitiveText = (value: string): string => {
+  let redacted = value
+    .replace(/((?:mongodb(?:\+srv)?|rediss?|https?):\/\/)[^/\s@]+@/gi, "$1[REDACTED]@")
+    .replace(/([?&](?:password|passwd|pwd|token|access_token|secret|api_key|apikey)=)[^&\s]+/gi, "$1[REDACTED]");
+  for (const secret of [env.AI_OPENAI_API_KEY].filter((value): value is string => Boolean(value))) {
+    redacted = redacted.split(secret).join("[REDACTED]");
+  }
+  return redacted;
+};
+
+function serializeError(error: unknown, seen = new Set<object>()): Record<string, unknown> {
+  if (!(error instanceof Error)) {
+    return { errorType: typeof error, message: redactSensitiveText(String(error)) };
+  }
+  if (seen.has(error)) {
+    return { errorType: error.name, message: "[Circular cause]" };
+  }
+  seen.add(error);
+  return {
+    errorType: error.name,
+    message: redactSensitiveText(error.message),
+    ...(error.stack ? { stack: redactSensitiveText(error.stack) } : {}),
+    ...(error.cause !== undefined ? { cause: serializeError(error.cause, seen) } : {})
+  };
+}
+
 const resolutionHeights = env.PROCESSING_RESOLUTIONS.split(",").map(Number);
 if (resolutionHeights.some((height) => !Number.isInteger(height) || height < 1 || height > 1080)) {
   throw new Error("PROCESSING_RESOLUTIONS must contain integer heights from 1 through 1080");
@@ -79,7 +104,7 @@ connection.on("error", (error) => {
 
 async function start(): Promise<void> {
   try {
-    await connectWithBoundedRetries(() => connection.connect(), 1, 0);
+    await connection.ping();
     await mongoose.connect(env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
     await mediaQueue.waitUntilReady();
     await intelligenceQueue.waitUntilReady();
@@ -162,7 +187,7 @@ async function start(): Promise<void> {
     }, "media processing worker ready");
   } catch (error) {
     logger.fatal({
-      errorType: error instanceof Error ? error.name : "UnknownError"
+      ...serializeError(error)
     }, "media worker startup failed");
     process.exitCode = 1;
     await shutdown("startup-failure");
