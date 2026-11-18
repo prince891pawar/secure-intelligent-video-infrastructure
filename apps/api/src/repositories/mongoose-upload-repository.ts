@@ -5,8 +5,11 @@ import type { UploadSessionRecord, UploadSessionRepository } from "../services/u
 
 export class MongooseUploadSessionRepository implements UploadSessionRepository {
   async create(record: Omit<UploadSessionRecord, "id" | "parts">): Promise<UploadSessionRecord> {
+    const { ownerId, videoId, ...sessionRecord } = record;
     const session = await UploadSession.create({
-      ...record,
+      ...sessionRecord,
+      owner: ownerId,
+      video: videoId,
       parts: [],
       status: "uploading"
     });

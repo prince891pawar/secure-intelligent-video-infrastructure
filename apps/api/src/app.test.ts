@@ -250,8 +250,13 @@ describe("authentication API (in-memory repository; not MongoDB integration)", (
       });
       expect(JSON.stringify(body)).not.toContain("passwordHash");
       expect(JSON.stringify(body)).not.toContain("test-hash");
+      expect(body).not.toHaveProperty("token");
       expect(response.headers.get("set-cookie")).toContain("HttpOnly");
       expect(response.headers.get("set-cookie")).toContain("SameSite=Lax");
+      const cookie = response.headers.get("set-cookie")!.split(";")[0]!;
+      const restoredSession = await fetch(`${baseUrl}/api/auth/me`, { headers: { Cookie: cookie } });
+      expect(restoredSession.status).toBe(200);
+      expect((await restoredSession.json()).user.email).toBe("video@example.com");
     });
 
     it("rejects duplicate normalized email addresses", async () => {
@@ -297,7 +302,12 @@ describe("authentication API (in-memory repository; not MongoDB integration)", (
       expect(response.status).toBe(200);
       expect(body.user.email).toBe("person@example.com");
       expect(JSON.stringify(body)).not.toContain("passwordHash");
-      expect(response.headers.get("set-cookie")).toContain("siv_session=");
+      expect(body).not.toHaveProperty("token");
+      const cookie = response.headers.get("set-cookie")!.split(";")[0]!;
+      expect(cookie).toContain("siv_session=");
+      const restoredSession = await fetch(`${baseUrl}/api/auth/me`, { headers: { Cookie: cookie } });
+      expect(restoredSession.status).toBe(200);
+      expect((await restoredSession.json()).user.email).toBe("person@example.com");
     });
 
     it("returns the same authentication error for invalid credentials", async () => {

@@ -1,14 +1,16 @@
 import dotenv from "dotenv";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
-dotenv.config({ path: resolve(process.cwd(), "../../.env") });
+const apiRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+dotenv.config({ path: resolve(apiRoot, "../../.env") });
 
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   API_HOST: z.string().default("127.0.0.1"),
   API_PORT: z.coerce.number().int().min(1).max(65535).default(4000),
-  WEB_ORIGIN: z.url().default("http://localhost:5173"),
+  WEB_ORIGIN: z.url().default("http://127.0.0.1:5173"),
   MONGODB_URI: z.string().min(1).default("mongodb://127.0.0.1:27017/secure-video"),
   REDIS_URL: z.url().default("redis://127.0.0.1:6379"),
   AUTH_SESSION_TTL_HOURS: z.coerce.number().int().min(1).max(168).default(24),
@@ -81,4 +83,8 @@ const envSchema = z.object({
   }
 });
 
-export const config = envSchema.parse(process.env);
+const parsedConfig = envSchema.parse(process.env);
+export const config = {
+  ...parsedConfig,
+  LOCAL_STORAGE_ROOT: resolve(apiRoot, parsedConfig.LOCAL_STORAGE_ROOT)
+};

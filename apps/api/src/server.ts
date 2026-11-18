@@ -99,7 +99,12 @@ const app = createApp({
 });
 
 const server = app.listen(config.API_PORT, config.API_HOST, () => {
-  logger.info({ host: config.API_HOST, port: config.API_PORT }, "API listening");
+  logger.info({
+    host: config.API_HOST,
+    port: config.API_PORT,
+    storageProvider: config.STORAGE_PROVIDER,
+    ...(config.STORAGE_PROVIDER === "local" ? { localStorageRoot: config.LOCAL_STORAGE_ROOT } : {})
+  }, "API listening");
 });
 
 async function connectDependencies() {

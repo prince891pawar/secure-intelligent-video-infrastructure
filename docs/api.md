@@ -1,6 +1,6 @@
 # API contract
 
-Base URL in local development: `http://localhost:4000`.
+Base URL in local development: `http://127.0.0.1:4000`.
 
 ## Liveness and readiness
 
@@ -23,7 +23,7 @@ Every response includes an `x-request-id`. The API restricts browser CORS to the
 | GET | `/api/videos/:videoId/processing` | Return the authenticated owner's processing state, attempt, probe metadata and verified rendition metadata (no storage keys). | `200`; `404` not owned/not found. |
 | POST | `/api/videos/:videoId/retry` | Retry a failed processing job or idempotently return the already queued attempt. Requires exact `Origin`. | `202`; `404` not owned/not found; `409` current state not retryable; `429` rate limit. |
 
-Auth state-changing requests require an exact `Origin` match to `WEB_ORIGIN`. Browser clients must send credentials (`credentials: "include"`). Session cookies are HttpOnly, SameSite=Lax and Secure in production. The API stores only a SHA-256 hash of each random session token; expiration is checked on every authenticated request and revocation is immediate. Password hashes are never serialized.
+Auth state-changing requests require an exact `Origin` match to `WEB_ORIGIN`. Browser clients must send credentials (`credentials: "include"`). Session cookies are HttpOnly, SameSite=Lax and Secure in production. Use the same hostname for the local frontend and API (`127.0.0.1` for both); mixing `localhost` and `127.0.0.1` makes browser fetches cross-site and prevents a Lax cookie from accompanying API requests. The API stores only a SHA-256 hash of each random session token; expiration is checked on every authenticated request and revocation is immediate. Password hashes are never serialized.
 
 The account and video routes are backed by Mongoose in the API process. Automated auth/API behavior tests currently use an in-memory repository because the local Docker MongoDB service is unavailable; they are not MongoDB integration tests.
 

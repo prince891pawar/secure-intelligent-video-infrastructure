@@ -101,7 +101,7 @@ npm run dev:web
 npm run dev:worker
 ```
 
-Open `http://localhost:5173`, register an account and upload supported MP4, QuickTime or WebM files. The upload UI supports selecting/dropping a file, pause/resume, retry, cancellation and refresh recovery. Processing states are polled while work is active, and failed jobs can be retried by their owner. Recovery metadata in localStorage is only a hint; the authenticated API is authoritative. MongoDB is needed for auth, uploads, processing state and the worker; Redis is needed to dispatch and execute processing jobs.
+Open `http://127.0.0.1:5173`, register an account and upload supported MP4, QuickTime or WebM files. Use `127.0.0.1` consistently for the web app and API: switching between `localhost` and `127.0.0.1` makes the browser treat the session-cookie request as cross-site. The upload UI supports selecting/dropping a file, pause/resume, retry, cancellation and refresh recovery. Processing states are polled while work is active, and failed jobs can be retried by their owner. Recovery metadata in localStorage is only a hint; the authenticated API is authoritative. MongoDB is needed for auth, uploads, processing state and the worker; Redis is needed to dispatch and execute processing jobs.
 
 On Windows, install a trusted FFmpeg build and add its `bin` folder to `PATH`, or set absolute `FFMPEG_PATH` and `FFPROBE_PATH` values in `.env`. Verify both tools in a new PowerShell terminal:
 
@@ -119,7 +119,7 @@ npm test
 npm run build
 ```
 
-The API liveness endpoint is `http://localhost:4000/health`; readiness is `http://localhost:4000/ready`. Worker readiness is logged only after Redis, MongoDB and both BullMQ workers are ready.
+The API liveness endpoint is `http://127.0.0.1:4000/health`; readiness is `http://127.0.0.1:4000/ready`. Worker readiness is logged only after Redis, MongoDB and both BullMQ workers are ready.
 
 ### Optional video intelligence
 

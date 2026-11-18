@@ -2,14 +2,17 @@ import { Worker, Queue } from "bullmq";
 import { Redis } from "ioredis";
 import dotenv from "dotenv";
 import mongoose from "mongoose";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import pino from "pino";
 import { z } from "zod";
+import { resolveMediaExecutablePaths } from "./media/ffmpeg.js";
 import { createVideoProcessor, reconcileQueuedVideos, recoverStaleVideos } from "./media/video-processor.js";
 import { createIntelligenceProcessor, reconcileQueuedIntelligence } from "./media/intelligence-processor.js";
 import { WorkerStorage } from "./storage/worker-storage.js";
 
-dotenv.config({ path: resolve(process.cwd(), "../../.env") });
+const workerRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+dotenv.config({ path: resolve(workerRoot, "../../.env") });
 
 const env = z.object({
   MONGODB_URI: z.string().min(1).default("mongodb://127.0.0.1:27017/secure-video"),
@@ -36,8 +39,6 @@ const env = z.object({
   AI_MAX_AUDIO_BYTES: z.coerce.number().int().min(1_000_000).max(25 * 1024 * 1024).default(24 * 1024 * 1024),
   AI_TIMEOUT_MS: z.coerce.number().int().min(10_000).max(600_000).default(120_000),
   AI_PROCESSING_CONCURRENCY: z.coerce.number().int().min(1).max(4).default(1),
-  FFMPEG_PATH: z.string().min(1).default("ffmpeg"),
-  FFPROBE_PATH: z.string().min(1).default("ffprobe"),
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"]).default("info")
 }).superRefine((values, context) => {
   if (values.STORAGE_PROVIDER === "s3" && !values.S3_BUCKET) {
@@ -45,6 +46,7 @@ const env = z.object({
   }
 }).parse(process.env);
 
+const mediaExecutables = resolveMediaExecutablePaths();
 const logger = pino({ level: env.LOG_LEVEL });
 const redactSensitiveText = (value: string): string => {
   let redacted = value
@@ -86,7 +88,7 @@ const mediaQueue = new Queue("media-processing", { connection });
 const intelligenceQueue = new Queue("video-intelligence", { connection });
 const storage = new WorkerStorage({
   provider: env.STORAGE_PROVIDER,
-  localRoot: resolve(env.LOCAL_STORAGE_ROOT),
+  localRoot: resolve(workerRoot, env.LOCAL_STORAGE_ROOT),
   bucket: env.S3_BUCKET,
   region: env.S3_REGION,
   ...(env.S3_ENDPOINT ? { endpoint: env.S3_ENDPOINT } : {}),
@@ -111,9 +113,8 @@ async function start(): Promise<void> {
     worker = new Worker(
       "media-processing",
       createVideoProcessor(storage, {
-        ffmpegPath: env.FFMPEG_PATH,
-        ffprobePath: env.FFPROBE_PATH,
-        temporaryRoot: resolve(env.PROCESSING_TEMP_ROOT),
+        ...mediaExecutables,
+        temporaryRoot: resolve(workerRoot, env.PROCESSING_TEMP_ROOT),
         maxDurationSeconds: env.PROCESSING_MAX_DURATION_SECONDS,
         maxOutputBytes: env.PROCESSING_MAX_OUTPUT_BYTES,
         maxUploadBytes: env.MAX_UPLOAD_SIZE_BYTES,
@@ -143,9 +144,8 @@ async function start(): Promise<void> {
     intelligenceWorker = new Worker(
       "video-intelligence",
       createIntelligenceProcessor(storage, {
-        ffmpegPath: env.FFMPEG_PATH,
-        ffprobePath: env.FFPROBE_PATH,
-        temporaryRoot: resolve(env.PROCESSING_TEMP_ROOT),
+        ...mediaExecutables,
+        temporaryRoot: resolve(workerRoot, env.PROCESSING_TEMP_ROOT),
         maxAudioBytes: env.AI_MAX_AUDIO_BYTES,
         timeoutMs: env.AI_TIMEOUT_MS,
         ...(env.AI_OPENAI_API_KEY ? { apiKey: env.AI_OPENAI_API_KEY } : {}),
@@ -182,6 +182,9 @@ async function start(): Promise<void> {
     logger.info({
       concurrency: env.PROCESSING_CONCURRENCY,
       resolutionHeights,
+      storageProvider: env.STORAGE_PROVIDER,
+      ...(env.STORAGE_PROVIDER === "local" ? { localStorageRoot: resolve(workerRoot, env.LOCAL_STORAGE_ROOT) } : {}),
+      temporaryRoot: resolve(workerRoot, env.PROCESSING_TEMP_ROOT),
       redis: "ready",
       mongodb: "ready"
     }, "media processing worker ready");
