@@ -187,8 +187,17 @@ export function createVideoProcessor(
         ffmpegPath: config.ffmpegPath,
         timeoutMs: config.timeoutMs,
         threads: config.threads,
-        maxOutputBytes: packagingBudget
+        maxOutputBytes: packagingBudget,
+        logger,
+        videoId,
+        attempt
       });
+      logger.info({
+        videoId,
+        attempt,
+        manifestCount: streaming.manifests.length,
+        assetCount: streaming.assets.length
+      }, "streaming package validated");
       const streamingAssets = [];
       for (const asset of streaming.assets) {
         const storageKey = `videos/${ownerId}/${videoId}/streaming/${attempt}/${asset.relativePath}`;
@@ -212,8 +221,17 @@ export function createVideoProcessor(
         storageKey,
         status: "ready"
       }));
+      logger.info({
+        videoId,
+        attempt,
+        fromStatus: "packaging",
+        toStatus: "completed",
+        renditionCount: renditions.length,
+        manifestCount: manifests.length,
+        assetCount: streamingAssets.length
+      }, "persisting completed video processing status");
       const saved = await WorkerVideo.updateOne(
-        { _id: videoId, processingAttempt: attempt, processingStatus: "transcoding" },
+        { _id: videoId, processingAttempt: attempt, processingStatus: "packaging" },
         {
           $set: {
             processingStatus: "completed",
@@ -240,6 +258,12 @@ export function createVideoProcessor(
           } : {})
         }
       ).exec();
+      logger.info({
+        videoId,
+        attempt,
+        matchedCount: saved.matchedCount,
+        processingStatus: saved.matchedCount > 0 ? "completed" : "unchanged"
+      }, "completed video processing status update finished");
       if (saved.matchedCount === 0) {
         await Promise.all(outputKeys.map((key) => storage.deleteObject(key)));
         return;

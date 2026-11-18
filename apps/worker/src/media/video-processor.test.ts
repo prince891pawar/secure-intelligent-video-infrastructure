@@ -7,10 +7,12 @@ import mongoose from "mongoose";
 import pino from "pino";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { parseProbeMetadata, probeMedia, resolveMediaExecutablePaths, runMediaCommand } from "./ffmpeg.js";
+import * as mediaCommands from "./ffmpeg.js";
 import { createVideoProcessor, selectRenditionHeights } from "./video-processor.js";
 import { connectWithBoundedRetries } from "../runtime/connection.js";
 import { WorkerVideo } from "../models/video.js";
 import type { MediaAssetStorage } from "@siv/shared";
+import * as streamingPackager from "./streaming-packager.js";
 import {
   generateHlsMasterPlaylist,
   packageAdaptiveStreaming,
@@ -74,6 +76,18 @@ describe("media worker safeguards", () => {
       message: expect.stringContaining("FFprobe diagnostic"),
       stderr: "FFprobe diagnostic",
       stack: expect.any(String)
+    });
+  });
+
+  it("kills timed-out media commands before rejecting", async () => {
+    await expect(runMediaCommand(
+      process.execPath,
+      ["-e", "setInterval(() => {}, 1000)"],
+      100,
+      1024
+    )).rejects.toMatchObject({
+      message: "Media command timed out",
+      exitCode: null
     });
   });
 
@@ -142,6 +156,54 @@ describe("media worker safeguards", () => {
       '<MPD type="static"><Initialization sourceURL="init-0.m4s"/><SegmentURL media="chunk-0-1.m4s"/></MPD>'
     )).toHaveLength(2);
     await expect(validateDashManifest(join(root, "stream.mpd"), '<MPD type="static"><SegmentURL media="missing.m4s"/></MPD>')).rejects.toThrow();
+  });
+
+  it("logs FFmpeg packaging command output and rethrows command failures", async () => {
+    const root = await mkdtemp(join(tmpdir(), "siv-packaging-command-"));
+    temporaryDirectories.push(root);
+    const logs: Array<Record<string, unknown>> = [];
+    const logger = pino({ level: "info" }, {
+      write: (line: string) => { logs.push(JSON.parse(line) as Record<string, unknown>); }
+    });
+    const commandError = Object.assign(new Error("Media command exited with code 7"), {
+      exitCode: 7,
+      stdout: "partial stdout",
+      stderr: "FFmpeg diagnostic"
+    });
+    vi.spyOn(mediaCommands, "runMediaCommand").mockRejectedValue(commandError);
+
+    await expect(packageAdaptiveStreaming([{
+      name: "240p",
+      width: 320,
+      height: 240,
+      codec: "h264",
+      fileSizeBytes: 100,
+      durationSeconds: 1,
+      path: join(root, "source.mp4")
+    }], join(root, "streaming"), {
+      ffmpegPath: "ffmpeg",
+      timeoutMs: 1_000,
+      threads: 1,
+      maxOutputBytes: 1024 * 1024,
+      logger,
+      videoId: "packaging-command-test",
+      attempt: 1
+    })).rejects.toBe(commandError);
+
+    expect(logs).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        msg: "starting FFmpeg packaging command",
+        operation: "hls:240p"
+      }),
+      expect.objectContaining({
+        msg: "FFmpeg packaging command failed",
+        operation: "hls:240p",
+        durationMs: expect.any(Number),
+        exitCode: 7,
+        stdout: "partial stdout",
+        stderr: "FFmpeg diagnostic"
+      })
+    ]));
   });
 
   it("persists terminal failure and removes temporary media after invalid input", async () => {
@@ -260,6 +322,98 @@ describe("media worker safeguards", () => {
         stderr: "invalid media container",
         retryable: true
       })
+    ]));
+  });
+
+  it("marks the video completed after packaging while its persisted status is packaging", async () => {
+    const root = await mkdtemp(join(tmpdir(), "siv-final-status-"));
+    temporaryDirectories.push(root);
+    const videoId = new mongoose.Types.ObjectId().toString();
+    const video = {
+      _id: new mongoose.Types.ObjectId(videoId),
+      owner: new mongoose.Types.ObjectId(),
+      uploadStatus: "uploaded",
+      processingStatus: "queued",
+      processingAttempt: 1,
+      fileSizeBytes: 17,
+      originalAssetStorageKey: `videos/${new mongoose.Types.ObjectId()}/${videoId}/original`
+    };
+    const query = { select: () => query, exec: async () => video };
+    vi.spyOn(WorkerVideo, "findOne").mockReturnValue(query as never);
+    const updates: Array<{ filter: Record<string, unknown>; update: Record<string, unknown> }> = [];
+    vi.spyOn(WorkerVideo, "updateOne").mockImplementation((...args: unknown[]) => {
+      updates.push({
+        filter: args[0] as Record<string, unknown>,
+        update: args[1] as Record<string, unknown>
+      });
+      return { exec: async () => ({ matchedCount: 1 }) } as never;
+    });
+    const uploadedKeys: string[] = [];
+    const storage = {
+      async downloadObject(_key: string, destination: string) { await writeFile(destination, Buffer.alloc(17)); },
+      async uploadFile(key: string) { uploadedKeys.push(key); },
+      async deleteObject() {}
+    } satisfies MediaAssetStorage;
+    vi.spyOn(mediaCommands, "probeMedia").mockResolvedValue({
+      durationSeconds: 1,
+      width: 320,
+      height: 240,
+      videoCodec: "h264"
+    });
+    vi.spyOn(mediaCommands, "runMediaCommand").mockImplementation(async (_executable, args) => {
+      await writeFile(args[args.length - 1]!, Buffer.alloc(7));
+      return { stdout: "", stderr: "", exitCode: 0 };
+    });
+    vi.spyOn(streamingPackager, "packageAdaptiveStreaming").mockImplementation(async (_renditions, outputRoot) => {
+      const dashRoot = join(outputRoot, "dash");
+      await mkdir(dashRoot, { recursive: true });
+      const segmentPath = join(dashRoot, "chunk-0-1.m4s");
+      const manifestPath = join(dashRoot, "stream.mpd");
+      await writeFile(segmentPath, Buffer.alloc(8));
+      await writeFile(manifestPath, "<MPD/>");
+      return {
+        assets: [{
+          relativePath: "dash/chunk-0-1.m4s",
+          path: segmentPath,
+          contentType: "video/iso.segment",
+          fileSizeBytes: 8
+        }],
+        manifests: [{
+          relativePath: "dash/stream.mpd",
+          protocol: "dash",
+          contentType: "application/dash+xml",
+          fileSizeBytes: 6
+        }]
+      };
+    });
+
+    await createVideoProcessor(storage, {
+      ffmpegPath: "ffmpeg",
+      ffprobePath: "ffprobe",
+      temporaryRoot: root,
+      maxDurationSeconds: 100,
+      maxOutputBytes: 1024 * 1024,
+      maxUploadBytes: 1024 * 1024,
+      threads: 1,
+      timeoutMs: 1_000,
+      resolutionHeights: [240]
+    }, pino({ level: "silent" }))({
+      data: { videoId, attempt: 1 },
+      attemptsMade: 0,
+      opts: { attempts: 3 }
+    } as never);
+
+    const completionUpdate = updates.find((entry) => entry.filter.processingStatus === "packaging");
+    expect(completionUpdate?.update).toMatchObject({
+      $set: { processingStatus: "completed", streamingStatus: "ready" }
+    });
+    expect(WorkerVideo.updateOne).toHaveBeenLastCalledWith(
+      expect.objectContaining({ processingStatus: "packaging" }),
+      expect.objectContaining({ $set: expect.objectContaining({ processingStatus: "completed" }) })
+    );
+    expect(uploadedKeys).toEqual(expect.arrayContaining([
+      `videos/${video.owner.toString()}/${videoId}/renditions/1/240p.mp4`,
+      `videos/${video.owner.toString()}/${videoId}/streaming/1/dash/chunk-0-1.m4s`
     ]));
   });
 
@@ -417,6 +571,10 @@ describe("media worker safeguards", () => {
     ], 60_000, 64 * 1024);
     const metadata = await probeMedia(process.env.FFPROBE_PATH ?? "ffprobe", sourcePath, 20_000);
     const outputRoot = join(directory, "adaptive");
+    const packagingLogs: Array<Record<string, unknown>> = [];
+    const packagingLogger = pino({ level: "info" }, {
+      write: (line: string) => { packagingLogs.push(JSON.parse(line) as Record<string, unknown>); }
+    });
     const packaged = await packageAdaptiveStreaming([{
       name: "240p",
       width: metadata.width,
@@ -429,7 +587,10 @@ describe("media worker safeguards", () => {
       ffmpegPath: process.env.FFMPEG_PATH ?? "ffmpeg",
       timeoutMs: 60_000,
       threads: 1,
-      maxOutputBytes: 20 * 1024 * 1024
+      maxOutputBytes: 20 * 1024 * 1024,
+      logger: packagingLogger,
+      videoId: "packaging-test",
+      attempt: 1
     });
 
     expect(packaged.manifests.map(({ protocol }) => protocol)).toEqual(expect.arrayContaining(["hls", "dash"]));
@@ -437,5 +598,22 @@ describe("media worker safeguards", () => {
     expect(packaged.assets.some(({ relativePath }) => relativePath.endsWith(".ts"))).toBe(true);
     expect(packaged.assets.some(({ relativePath }) => relativePath.endsWith(".m4s"))).toBe(true);
     expect(packaged.assets.some(({ relativePath }) => relativePath.startsWith("dash/"))).toBe(true);
+    const commandStarts = packagingLogs.filter((log) => log.msg === "starting FFmpeg packaging command");
+    const commandCompletions = packagingLogs.filter((log) => log.msg === "FFmpeg packaging command completed");
+    expect(commandStarts.map((log) => log.operation)).toEqual(["hls:240p", "dash"]);
+    expect(commandCompletions.map((log) => log.operation)).toEqual(["hls:240p", "dash"]);
+    expect(commandCompletions).toHaveLength(2);
+    for (const log of commandCompletions) {
+      expect(log).toEqual(expect.objectContaining({
+        durationMs: expect.any(Number),
+        exitCode: 0,
+        stdout: expect.any(String),
+        stderr: expect.any(String)
+      }));
+    }
+    expect(packagingLogs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ msg: "HLS media manifest validated", valid: true }),
+      expect.objectContaining({ msg: "DASH manifest validated", valid: true })
+    ]));
   });
 });

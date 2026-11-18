@@ -3,10 +3,13 @@ import { spawn } from "node:child_process";
 export interface ProcessResult {
   stdout: string;
   stderr: string;
+  exitCode: number;
 }
 
 export interface MediaCommandError extends Error {
+  stdout?: string;
   stderr?: string;
+  exitCode?: number | null;
 }
 
 export interface MediaExecutablePaths {
@@ -47,17 +50,18 @@ export function runMediaCommand(
     let stderr = "";
     let stdoutBytes = 0;
     let settled = false;
+    let terminationError: MediaCommandError | undefined;
+    let forceKillTimer: NodeJS.Timeout | undefined;
+    let cleanupTimer: NodeJS.Timeout | undefined;
     const timeout = setTimeout(() => {
-      process.kill();
-      finish(createMediaCommandError("Media command timed out", stderr));
+      terminate(createMediaCommandError("Media command timed out", stdout, stderr));
     }, timeoutMs);
 
     const appendBounded = (current: string, chunk: Buffer, isStdout: boolean): string => {
       if (isStdout) {
         stdoutBytes += chunk.length;
         if (stdoutBytes > maxOutputBytes) {
-          process.kill();
-          finish(createMediaCommandError("Media command output exceeded its configured limit", stderr));
+          terminate(createMediaCommandError("Media command output exceeded its configured limit", stdout, stderr));
           return current;
         }
       }
@@ -67,34 +71,73 @@ export function runMediaCommand(
     process.stdout.on("data", (chunk: Buffer) => { stdout = appendBounded(stdout, chunk, true); });
     process.stderr.on("data", (chunk: Buffer) => { stderr = appendBounded(stderr, chunk, false); });
     process.once("error", (error) => {
-      attachMediaStderr(error, stderr);
-      finish(error);
+      attachMediaOutput(error, stdout, stderr);
+      if (!terminationError) finish(error);
     });
     process.once("close", (code) => {
-      if (code === 0) finish(undefined, { stdout, stderr });
-      else finish(createMediaCommandError(
-        `Media command exited with code ${String(code)}: ${stderr.slice(-4000)}`,
-        stderr
-      ));
+      if (terminationError) {
+        attachMediaOutput(terminationError, stdout, stderr, code);
+        finish(terminationError);
+      } else if (code === 0) {
+        finish(undefined, { stdout, stderr, exitCode: code });
+      } else {
+        finish(createMediaCommandError(
+          `Media command exited with code ${String(code)}: ${stderr.slice(-4000)}`,
+          stdout,
+          stderr,
+          code
+        ));
+      }
     });
+
+    function terminate(error: MediaCommandError): void {
+      if (settled || terminationError) return;
+      terminationError = error;
+      process.kill();
+      forceKillTimer = setTimeout(() => {
+        if (settled) return;
+        process.kill("SIGKILL");
+        cleanupTimer = setTimeout(() => {
+          if (!settled) {
+            attachMediaOutput(error, stdout, stderr, null);
+            finish(error);
+          }
+        }, 1_000);
+      }, 1_000);
+    }
 
     function finish(error?: Error, result?: ProcessResult) {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
+      if (forceKillTimer) clearTimeout(forceKillTimer);
+      if (cleanupTimer) clearTimeout(cleanupTimer);
       if (error) reject(error);
-      else resolve(result ?? { stdout, stderr });
+      else resolve(result ?? { stdout, stderr, exitCode: 0 });
     }
   });
 }
 
-function attachMediaStderr(error: Error, stderr: string): void {
-  if (stderr) (error as MediaCommandError).stderr = stderr.slice(-4000);
+function attachMediaOutput(
+  error: Error,
+  stdout: string,
+  stderr: string,
+  exitCode?: number | null
+): void {
+  const mediaError = error as MediaCommandError;
+  mediaError.stdout = stdout.slice(-64 * 1024);
+  mediaError.stderr = stderr.slice(-64 * 1024);
+  if (exitCode !== undefined) mediaError.exitCode = exitCode;
 }
 
-function createMediaCommandError(message: string, stderr: string): MediaCommandError {
+function createMediaCommandError(
+  message: string,
+  stdout: string,
+  stderr: string,
+  exitCode?: number | null
+): MediaCommandError {
   const error: MediaCommandError = new Error(message);
-  if (stderr) error.stderr = stderr.slice(-4000);
+  attachMediaOutput(error, stdout, stderr, exitCode);
   return error;
 }
 
@@ -119,7 +162,7 @@ export async function probeMedia(
   try {
     return parseProbeMetadata(result.stdout);
   } catch (error) {
-    if (error instanceof Error) attachMediaStderr(error, result.stderr);
+    if (error instanceof Error) attachMediaOutput(error, result.stdout, result.stderr, result.exitCode);
     throw error;
   }
 }

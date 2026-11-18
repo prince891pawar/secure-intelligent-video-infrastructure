@@ -76,10 +76,10 @@ describe("video intelligence worker (mocked storage, provider, MongoDB and media
       async deleteObject() {}
     };
     vi.spyOn(mediaCommands, "runMediaCommand").mockImplementation(async (_executable, args) => {
-      if (args.includes("-select_streams")) return { stdout: JSON.stringify({ streams: [{ codec_type: "audio" }] }), stderr: "" };
+      if (args.includes("-select_streams")) return { stdout: JSON.stringify({ streams: [{ codec_type: "audio" }] }), stderr: "", exitCode: 0 };
       const outputPath = args[args.length - 1]!;
       await writeFile(outputPath, Buffer.from("bounded-audio"));
-      return { stdout: "", stderr: "" };
+      return { stdout: "", stderr: "", exitCode: 0 };
     });
     vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
       const url = String(input);
@@ -144,7 +144,8 @@ describe("video intelligence worker (mocked storage, provider, MongoDB and media
     };
     vi.spyOn(mediaCommands, "runMediaCommand").mockResolvedValue({
       stdout: JSON.stringify({ streams: [] }),
-      stderr: ""
+      stderr: "",
+      exitCode: 0
     });
     const processor = createIntelligenceProcessor(storage, {
       ffmpegPath: "ffmpeg",

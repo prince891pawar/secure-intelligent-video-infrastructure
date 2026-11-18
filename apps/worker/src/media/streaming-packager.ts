@@ -1,6 +1,7 @@
 import { mkdir, open, readFile, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, sep } from "node:path";
-import { runMediaCommand } from "./ffmpeg.js";
+import type pino from "pino";
+import { runMediaCommand, type MediaCommandError, type ProcessResult } from "./ffmpeg.js";
 
 export interface PackagingRendition {
   name: string;
@@ -36,6 +37,9 @@ export interface StreamingPackagingConfig {
   timeoutMs: number;
   threads: number;
   maxOutputBytes: number;
+  logger: pino.Logger;
+  videoId: string;
+  attempt: number;
 }
 
 export async function packageAdaptiveStreaming(
@@ -57,7 +61,7 @@ export async function packageAdaptiveStreaming(
     await mkdir(renditionRoot, { recursive: true });
     const playlistPath = join(renditionRoot, "index.m3u8");
     const segmentPattern = join(renditionRoot, "segment-%05d.ts");
-    await runMediaCommand(config.ffmpegPath, [
+    await runPackagingCommand(config, `hls:${rendition.name}`, [
       "-hide_banner", "-nostdin", "-v", "error",
       "-i", rendition.path,
       "-map", "0:v:0",
@@ -70,9 +74,18 @@ export async function packageAdaptiveStreaming(
       "-hls_segment_filename", segmentPattern,
       "-fs", String(remaining),
       playlistPath
-    ], config.timeoutMs, 64 * 1024);
+    ], dirname(playlistPath));
     const playlist = await readManifest(playlistPath);
     const segments = await validateHlsMediaPlaylist(playlistPath, playlist);
+    config.logger.info({
+      videoId: config.videoId,
+      attempt: config.attempt,
+      protocol: "hls",
+      rendition: rendition.name,
+      manifestPath: playlistPath,
+      segmentCount: segments.length,
+      valid: true
+    }, "HLS media manifest validated");
     const relativePath = relative(outputRoot, playlistPath).split(sep).join("/");
     assets.push(await makeAsset(outputRoot, playlistPath, "application/vnd.apple.mpegurl"));
     manifests.push(await makeManifest(relativePath, playlistPath, "hls", "application/vnd.apple.mpegurl"));
@@ -83,6 +96,14 @@ export async function packageAdaptiveStreaming(
   const master = generateHlsMasterPlaylist(sorted);
   await writeFile(masterPath, master, "utf8");
   validateHlsMasterPlaylist(master, sorted.map(({ name }) => name));
+  config.logger.info({
+    videoId: config.videoId,
+    attempt: config.attempt,
+    protocol: "hls",
+    manifestPath: masterPath,
+    renditionCount: sorted.length,
+    valid: true
+  }, "HLS master manifest validated");
 
   assets.push(await makeAsset(outputRoot, masterPath, "application/vnd.apple.mpegurl"));
   manifests.push(await makeManifest("hls/master.m3u8", masterPath, "hls", "application/vnd.apple.mpegurl"));
@@ -92,6 +113,14 @@ export async function packageAdaptiveStreaming(
   const dashManifest = await createDashPackage(sorted, dashRoot, { ...config, maxOutputBytes: remainingForDash });
   const dashContents = await readManifest(dashManifest);
   const dashAssets = await validateDashManifest(dashManifest, dashContents);
+  config.logger.info({
+    videoId: config.videoId,
+    attempt: config.attempt,
+    protocol: "dash",
+    manifestPath: dashManifest,
+    referencedAssetCount: dashAssets.length,
+    valid: true
+  }, "DASH manifest validated");
   for (const asset of dashAssets) {
     assets.push(await makeAsset(outputRoot, asset, inferDashAssetContentType(asset)));
   }
@@ -100,6 +129,13 @@ export async function packageAdaptiveStreaming(
 
   const totalBytes = assets.reduce((sum, asset) => sum + asset.fileSizeBytes, 0);
   if (totalBytes > config.maxOutputBytes) throw new Error("Streaming assets exceed the configured total output limit");
+  config.logger.info({
+    videoId: config.videoId,
+    attempt: config.attempt,
+    manifestCount: manifests.length,
+    assetCount: assets.length,
+    totalBytes
+  }, "adaptive streaming package validated");
   return { assets, manifests };
 }
 
@@ -205,8 +241,56 @@ async function createDashPackage(
     "-fs", String(config.maxOutputBytes),
     manifestPath
   );
-  await runMediaCommand(config.ffmpegPath, args, config.timeoutMs, 64 * 1024, { cwd: outputDirectory });
+  await runPackagingCommand(config, "dash", args, outputDirectory);
   return manifestPath;
+}
+
+async function runPackagingCommand(
+  config: StreamingPackagingConfig,
+  operation: string,
+  args: string[],
+  cwd: string
+): Promise<ProcessResult> {
+  const context = {
+    videoId: config.videoId,
+    attempt: config.attempt,
+    operation,
+    executable: config.ffmpegPath,
+    args,
+    cwd,
+    timeoutMs: config.timeoutMs
+  };
+  const startedAt = Date.now();
+  config.logger.info(context, "starting FFmpeg packaging command");
+  try {
+    const result = await runMediaCommand(config.ffmpegPath, args, config.timeoutMs, 64 * 1024, { cwd });
+    config.logger.info({
+      videoId: config.videoId,
+      attempt: config.attempt,
+      operation,
+      durationMs: Date.now() - startedAt,
+      exitCode: result.exitCode,
+      stdout: result.stdout,
+      stderr: result.stderr
+    }, "FFmpeg packaging command completed");
+    return result;
+  } catch (error) {
+    const commandError = error instanceof Error ? error as MediaCommandError : undefined;
+    config.logger.error({
+      videoId: config.videoId,
+      attempt: config.attempt,
+      operation,
+      durationMs: Date.now() - startedAt,
+      errorType: error instanceof Error ? error.name : "UnknownError",
+      message: error instanceof Error ? error.message : String(error),
+      ...(commandError ? {
+        stdout: commandError.stdout ?? "",
+        stderr: commandError.stderr ?? "",
+        ...(commandError.exitCode === undefined ? {} : { exitCode: commandError.exitCode })
+      } : {})
+    }, "FFmpeg packaging command failed");
+    throw error;
+  }
 }
 
 async function readManifest(path: string): Promise<string> {
