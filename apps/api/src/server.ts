@@ -80,6 +80,7 @@ const app = createApp({
   videos: new MongooseVideoRepository(),
   uploads: uploadService,
   processingQueue,
+  processingRetryStaleAfterMs: config.PROCESSING_MANUAL_RETRY_AFTER_MS,
   playback: playbackService,
   intelligence: videoIntelligence,
   storage,

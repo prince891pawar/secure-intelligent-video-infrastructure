@@ -15,6 +15,17 @@ export interface TranscodeJobData {
   attempt: number;
 }
 
+type ProcessingQueue = {
+  add(name: string, data: TranscodeJobData, options: {
+    jobId: string;
+    attempts: number;
+    backoff: { type: "exponential"; delay: number };
+    removeOnComplete: number;
+    removeOnFail: number;
+  }): Promise<unknown>;
+  getJob(jobId: string): Promise<{ getState(): Promise<string>; remove(): Promise<void> } | undefined>;
+};
+
 export interface VideoProcessorConfig {
   ffmpegPath: string;
   ffprobePath: string;
@@ -333,7 +344,7 @@ export function selectRenditionHeights(sourceHeight: number, configuredHeights: 
 }
 
 export async function reconcileQueuedVideos(
-  queue: { add(name: string, data: TranscodeJobData, options: { jobId: string; attempts: number; backoff: { type: "exponential"; delay: number }; removeOnComplete: number; removeOnFail: number }): Promise<unknown> },
+  queue: ProcessingQueue,
   limit = 100
 ): Promise<number> {
   const videos = await WorkerVideo.find({ uploadStatus: "uploaded", processingStatus: "queued" })
@@ -344,15 +355,29 @@ export async function reconcileQueuedVideos(
     .exec();
   for (const video of videos) {
     const videoId = video._id.toString();
-    await queue.add("transcode-video", { videoId, attempt: video.processingAttempt }, {
-      jobId: `${videoId}-${video.processingAttempt}`,
-      attempts: 3,
-      backoff: { type: "exponential", delay: 2_000 },
-      removeOnComplete: 100,
-      removeOnFail: 1_000
-    });
+    await enqueueProcessingJob(queue, videoId, video.processingAttempt);
   }
   return videos.length;
+}
+
+export async function enqueueProcessingJob(queue: ProcessingQueue, videoId: string, attempt: number): Promise<void> {
+  const jobId = `${videoId}-${attempt}`;
+  const existing = await queue.getJob(jobId);
+  if (existing) {
+    const state = await existing.getState();
+    if (state === "completed" || state === "failed") {
+      await existing.remove();
+    } else {
+      return;
+    }
+  }
+  await queue.add("transcode-video", { videoId, attempt }, {
+    jobId,
+    attempts: 3,
+    backoff: { type: "exponential", delay: 2_000 },
+    removeOnComplete: 100,
+    removeOnFail: 1_000
+  });
 }
 
 export async function recoverStaleVideos(staleBefore: Date, limit = 100): Promise<Array<{ videoId: string; attempt: number }>> {

@@ -30,6 +30,7 @@ const envSchema = z.object({
   PROCESSING_MAX_OUTPUT_BYTES: z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER).default(10 * 1024 ** 3),
   PROCESSING_THREADS: z.coerce.number().int().min(1).max(16).default(2),
   PROCESSING_TIMEOUT_MS: z.coerce.number().int().min(10_000).max(7_200_000).default(1_800_000),
+  PROCESSING_MANUAL_RETRY_AFTER_MS: z.coerce.number().int().min(60_000).max(86_400_000).default(1_800_000),
   PROCESSING_RESOLUTIONS: z.string().default("1080,720,480,360,240"),
   PROCESSING_TEMP_ROOT: z.string().min(1).default("../../.processing-temp"),
   AI_OPENAI_API_KEY: z.preprocess((value) => value === "" ? undefined : value, z.string().min(1).optional()),

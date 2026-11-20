@@ -77,6 +77,7 @@ class MemoryAuthRepository implements AuthRepository {
 
 class MemoryVideoRepository implements VideoRepository {
   readonly items: Array<VideoListItem & { ownerId: string }> = [];
+  readonly processingUpdatedAt = new Map<string, Date>();
 
   async createPending() {
     return crypto.randomUUID();
@@ -102,11 +103,13 @@ class MemoryVideoRepository implements VideoRepository {
 
   async getQueuedAttempt() { return null; }
 
-  async retryProcessing(ownerId: string, videoId: string) {
+  async retryProcessing(ownerId: string, videoId: string, staleBefore: Date) {
     const item = this.items.find((video) => video.id === videoId && video.ownerId === ownerId);
     if (!item) return null;
     if (item.processingStatus === "queued") return 1;
-    if (item.processingStatus !== "failed") return -1;
+    const stale = ["probing", "transcoding", "packaging"].includes(item.processingStatus)
+      && (this.processingUpdatedAt.get(videoId)?.getTime() ?? Infinity) <= staleBefore.getTime();
+    if (item.processingStatus !== "failed" && !stale) return -1;
     item.processingStatus = "queued";
     return 1;
   }
@@ -133,6 +136,7 @@ function createTestDependencies(mongodb: boolean, redis: boolean) {
     uploads: unavailableUploadService,
     processingQueue,
     processingJobs,
+    processingRetryStaleAfterMs: 30 * 60_000,
     authConfig: {
       webOrigin: "http://localhost:5173",
       sessionCookieName: "siv_session",
@@ -420,7 +424,7 @@ describe("authentication API (in-memory repository; not MongoDB integration)", (
     expect(ownerIsolated.status).toBe(404);
   });
 
-  it("allows an owner to view and retry only a failed processing job", async () => {
+  it("allows an owner to view and retry a failed processing job", async () => {
     const dependencies = createTestDependencies(true, false);
     const owner = await dependencies.authService.register({
       email: "retry-owner@example.com",
@@ -456,5 +460,39 @@ describe("authentication API (in-memory repository; not MongoDB integration)", (
     expect(retry.status).toBe(202);
     expect((await retry.json()).processing.processingStatus).toBe("queued");
     expect(dependencies.processingJobs).toEqual([{ videoId: "retry-me", attempt: 1 }]);
+  });
+
+  it("allows the owner to safely requeue a stale packaging attempt", async () => {
+    const dependencies = createTestDependencies(true, false);
+    const owner = await dependencies.authService.register({
+      email: "stale-owner@example.com",
+      password: "correct horse battery staple",
+      displayName: "Stale owner"
+    });
+    dependencies.videos.items.push({
+      id: "stale-packaging",
+      ownerId: owner.user.id,
+      title: "Stale packaging",
+      uploadStatus: "uploaded",
+      processingStatus: "packaging",
+      streamingStatus: "packaging",
+      maxConcurrentPlaybackSessions: 2,
+      visibility: "private",
+      createdAt: new Date().toISOString()
+    });
+    dependencies.videos.processingUpdatedAt.set("stale-packaging", new Date(Date.now() - 45 * 60_000));
+    const app = createApp(dependencies);
+    const server = app.listen(0);
+    servers.push(server);
+    await new Promise<void>((resolve) => server.once("listening", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Test server did not bind to a TCP port");
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+
+    const retry = await postJson(baseUrl, "/api/videos/stale-packaging/retry", {}, `siv_session=${owner.token}`);
+
+    expect(retry.status).toBe(202);
+    expect((await retry.json()).processing.processingStatus).toBe("queued");
+    expect(dependencies.processingJobs).toEqual([{ videoId: "stale-packaging", attempt: 1 }]);
   });
 });

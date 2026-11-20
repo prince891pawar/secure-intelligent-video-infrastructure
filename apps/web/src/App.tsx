@@ -651,9 +651,19 @@ function SecurePlayer({ video, grant, startAtSeconds, onClose }: { video: Playba
           }
         });
         hls.on(HlsPlayer.Events.ERROR, (_event, data) => {
-          if (data.fatal) setError(data.response?.code === 403
-            ? "Playback authorization expired or was revoked. Start a new playback session."
-            : "The adaptive stream could not be played.");
+          if (!data.fatal) return;
+          if (data.response?.code === 403) {
+            setError("Playback authorization expired or was revoked. Start a new playback session.");
+            return;
+          }
+          if (videoElement.canPlayType("application/vnd.apple.mpegurl")) {
+            hls.destroy();
+            hlsRef.current = null;
+            videoElement.src = source;
+            setError("");
+            return;
+          }
+          setError("The adaptive stream could not be played.");
         });
         hls.loadSource(source);
         hls.attachMedia(videoElement);

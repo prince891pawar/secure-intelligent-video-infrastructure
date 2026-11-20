@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import pino from "pino";
 import { z } from "zod";
 import { resolveMediaExecutablePaths } from "./media/ffmpeg.js";
-import { createVideoProcessor, reconcileQueuedVideos, recoverStaleVideos } from "./media/video-processor.js";
+import { createVideoProcessor, enqueueProcessingJob, reconcileQueuedVideos, recoverStaleVideos } from "./media/video-processor.js";
 import { createIntelligenceProcessor, reconcileQueuedIntelligence } from "./media/intelligence-processor.js";
 import { WorkerStorage } from "./storage/worker-storage.js";
 
@@ -200,13 +200,7 @@ async function start(): Promise<void> {
 async function reconcileProcessingQueue(): Promise<void> {
   const staleJobs = await recoverStaleVideos(new Date(Date.now() - env.PROCESSING_STALE_AFTER_MS));
   for (const job of staleJobs) {
-    await mediaQueue.add("transcode-video", job, {
-      jobId: `${job.videoId}-${job.attempt}`,
-      attempts: 3,
-      backoff: { type: "exponential", delay: 2_000 },
-      removeOnComplete: 100,
-      removeOnFail: 1_000
-    });
+    await enqueueProcessingJob(mediaQueue, job.videoId, job.attempt);
   }
   await reconcileQueuedVideos(mediaQueue);
 }

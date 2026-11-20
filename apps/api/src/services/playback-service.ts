@@ -148,7 +148,7 @@ export class PlaybackService {
     if (!session) throw unauthorizedPlayback();
     const relativePath = decodeAssetPath(encodedPath);
     const video = await Video.findById(claims.vid)
-      .select("owner visibility processingStatus streamingStatus manifests +manifests.storageKey streamingAssets +streamingAssets.storageKey")
+      .select("owner visibility processingStatus streamingStatus manifests.protocol manifests.relativePath manifests.contentType manifests.fileSizeBytes +manifests.storageKey streamingAssets.relativePath streamingAssets.contentType streamingAssets.fileSizeBytes +streamingAssets.storageKey")
       .lean()
       .exec();
     if (!video || (video.owner.toString() !== session.userId.toString() && video.visibility !== "public")

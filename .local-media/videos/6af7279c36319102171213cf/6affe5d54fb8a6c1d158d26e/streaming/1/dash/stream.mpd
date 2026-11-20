@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<MPD xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns="urn:mpeg:dash:schema:mpd:2011"
+	xmlns:xlink="http://www.w3.org/1999/xlink"
+	xsi:schemaLocation="urn:mpeg:DASH:schema:MPD:2011 http://standards.iso.org/ittf/PubliclyAvailableStandards/MPEG-DASH_schema_files/DASH-MPD.xsd"
+	profiles="urn:mpeg:dash:profile:isoff-live:2011"
+	type="static"
+	mediaPresentationDuration="PT24.0S"
+	maxSegmentDuration="PT6.0S"
+	minBufferTime="PT16.6S">
+	<ProgramInformation>
+	</ProgramInformation>
+	<ServiceDescription id="0">
+	</ServiceDescription>
+	<Period id="0" start="PT0.0S">
+		<AdaptationSet id="0" contentType="video" startWithSAP="1" segmentAlignment="true" bitstreamSwitching="true" frameRate="30/1" maxWidth="1522" maxHeight="720" par="480:227" lang="und">
+			<Representation id="0" mimeType="video/mp4" codecs="avc1.640020" bandwidth="55183" width="1522" height="720" sar="172800:172747">
+				<SegmentList timescale="1000000" duration="6000000" startNumber="1">
+					<Initialization sourceURL="init-0.m4s" />
+					<SegmentURL media="chunk-0-1.m4s" />
+					<SegmentURL media="chunk-0-2.m4s" />
+					<SegmentURL media="chunk-0-3.m4s" />
+				</SegmentList>
+			</Representation>
+			<Representation id="1" mimeType="video/mp4" codecs="avc1.64001f" bandwidth="33889" width="1014" height="480" sar="38400:38363">
+				<SegmentList timescale="1000000" duration="6000000" startNumber="1">
+					<Initialization sourceURL="init-1.m4s" />
+					<SegmentURL media="chunk-1-1.m4s" />
+					<SegmentURL media="chunk-1-2.m4s" />
+					<SegmentURL media="chunk-1-3.m4s" />
+				</SegmentList>
+			</Representation>
+			<Representation id="2" mimeType="video/mp4" codecs="avc1.64001e" bandwidth="24600" width="762" height="360" sar="28800:28829">
+				<SegmentList timescale="1000000" duration="6000000" startNumber="1">
+					<Initialization sourceURL="init-2.m4s" />
+					<SegmentURL media="chunk-2-1.m4s" />
+					<SegmentURL media="chunk-2-2.m4s" />
+					<SegmentURL media="chunk-2-3.m4s" />
+				</SegmentList>
+			</Representation>
+			<Representation id="3" mimeType="video/mp4" codecs="avc1.640015" bandwidth="15070" width="508" height="240" sar="28800:28829">
+				<SegmentList timescale="1000000" duration="6000000" startNumber="1">
+					<Initialization sourceURL="init-3.m4s" />
+					<SegmentURL media="chunk-3-1.m4s" />
+					<SegmentURL media="chunk-3-2.m4s" />
+					<SegmentURL media="chunk-3-3.m4s" />
+				</SegmentList>
+			</Representation>
+		</AdaptationSet>
+	</Period>
+</MPD>

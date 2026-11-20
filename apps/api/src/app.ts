@@ -28,6 +28,7 @@ export interface AppDependencies {
   videos: VideoRepository;
   uploads: Pick<UploadService, "create" | "get" | "authorizePart" | "uploadPart" | "confirmPart" | "complete" | "abort">;
   processingQueue: ProcessingQueue;
+  processingRetryStaleAfterMs: number;
   authConfig: AuthRouteConfig;
   uploadConfig: UploadRoutesConfig;
   playback?: PlaybackService;
@@ -46,7 +47,20 @@ function requireMongo(probes: ReadinessProbes) {
   };
 }
 
-export function createApp({ probes, logger, authService, videos, uploads, processingQueue, authConfig, uploadConfig, playback, storage, intelligence }: AppDependencies) {
+export function createApp({
+  probes,
+  logger,
+  authService,
+  videos,
+  uploads,
+  processingQueue,
+  processingRetryStaleAfterMs,
+  authConfig,
+  uploadConfig,
+  playback,
+  storage,
+  intelligence
+}: AppDependencies) {
   const app = express();
 
   app.disable("x-powered-by");
@@ -101,7 +115,8 @@ export function createApp({ probes, logger, authService, videos, uploads, proces
     authConfig.sessionCookieName,
     authConfig.webOrigin,
     authConfig.rateLimitWindowMs,
-    authConfig.rateLimitMax
+    authConfig.rateLimitMax,
+    processingRetryStaleAfterMs
   ));
   app.use("/api/uploads", requireMongo(probes), createUploadRoutes(authService, uploads, uploadConfig));
   if (playback && storage) {

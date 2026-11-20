@@ -123,7 +123,7 @@ class MemoryVideos implements VideoRepository {
     return video?.processingStatus === "queued" ? video.processingAttempt : null;
   }
 
-  async retryProcessing(ownerId: string, videoId: string) {
+  async retryProcessing(ownerId: string, videoId: string, _staleBefore: Date) {
     const video = this.videos.get(videoId);
     if (!video || video.ownerId !== ownerId) return null;
     if (video.processingStatus === "queued") return video.processingAttempt;

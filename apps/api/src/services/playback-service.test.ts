@@ -14,7 +14,7 @@ const videoId = new mongoose.Types.ObjectId().toString();
 const sessionId = new mongoose.Types.ObjectId().toString();
 
 function chain(value: unknown) {
-  const query = { exec: async () => value, lean: () => query, select: () => query, sort: () => query };
+  const query = { exec: async () => value, lean: () => query, select: (_fields?: string) => query, sort: () => query };
   return query;
 }
 
@@ -100,6 +100,7 @@ describe("playback service (mocked MongoDB models)", () => {
 
   it("only resolves asset paths present in the persisted video allowlist", async () => {
     const service = new PlaybackService({ signingSecret: secret, sessionTtlMinutes: 10 });
+    let assetProjection = "";
     const payload = Buffer.from(JSON.stringify({
       sid: sessionId,
       vid: videoId,
@@ -109,24 +110,33 @@ describe("playback service (mocked MongoDB models)", () => {
     vi.spyOn(PlaybackSession, "findOne").mockReturnValue(chain({
       userId: new mongoose.Types.ObjectId(userId)
     }) as never);
-    vi.spyOn(Video, "findById").mockReturnValue(chain({
-      owner: new mongoose.Types.ObjectId(userId),
-      visibility: "private",
-      processingStatus: "completed",
-      streamingStatus: "ready",
-      manifests: [{
-        relativePath: "hls/master.m3u8",
-        storageKey: "videos/owner/video/streaming/hls/master.m3u8",
-        contentType: "application/vnd.apple.mpegurl",
-        fileSizeBytes: 120,
-        status: "ready"
-      }],
-      streamingAssets: []
-    }) as never);
+    vi.spyOn(Video, "findById").mockImplementation(() => {
+      const query = chain({
+        owner: new mongoose.Types.ObjectId(userId),
+        visibility: "private",
+        processingStatus: "completed",
+        streamingStatus: "ready",
+        manifests: [{
+          relativePath: "hls/master.m3u8",
+          storageKey: "videos/owner/video/streaming/hls/master.m3u8",
+          contentType: "application/vnd.apple.mpegurl",
+          fileSizeBytes: 120,
+          status: "ready"
+        }],
+        streamingAssets: []
+      });
+      query.select = (fields?: string) => {
+        assetProjection = fields ?? "";
+        return query;
+      };
+      return query as never;
+    });
     vi.spyOn(PlaybackSession, "updateOne").mockReturnValue({ exec: async () => ({ matchedCount: 1 }) } as never);
 
     await expect(service.getAuthorizedAsset(sessionId, credential, encodeAssetPath("hls/master.m3u8")))
       .resolves.toMatchObject({ contentType: "application/vnd.apple.mpegurl", manifest: true });
+    expect(assetProjection).toContain("+manifests.storageKey");
+    expect(assetProjection).not.toMatch(/(?:^|\s)manifests(?:\s|$)/);
     await expect(service.getAuthorizedAsset(sessionId, credential, encodeAssetPath("hls/other.m3u8")))
       .rejects.toMatchObject({ statusCode: 403 });
   });

@@ -14,7 +14,8 @@ export function createVideoRoutes(
   cookieName: string,
   webOrigin: string,
   rateLimitWindowMs: number,
-  rateLimitMax: number
+  rateLimitMax: number,
+  processingRetryStaleAfterMs: number
 ): Router {
   const router = Router();
   router.use(requireAuthentication(authService, cookieName));
@@ -42,7 +43,8 @@ export function createVideoRoutes(
 
   router.post("/:videoId/retry", retryLimit, requireOrigin(webOrigin), async (request, response) => {
     const videoId = routeVideoId(request.params.videoId);
-    const attempt = await videos.retryProcessing(request.auth!.user.id, videoId);
+    const staleBefore = new Date(Date.now() - processingRetryStaleAfterMs);
+    const attempt = await videos.retryProcessing(request.auth!.user.id, videoId, staleBefore);
     if (attempt === null) throw new ApiError(404, "VIDEO_NOT_FOUND", "Video was not found");
     if (attempt < 0) throw new ApiError(409, "PROCESSING_NOT_RETRYABLE", "Video processing is not currently retryable");
     await queue.enqueue(videoId, attempt);

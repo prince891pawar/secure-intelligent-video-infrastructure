@@ -10,7 +10,7 @@ export interface VideoRepository {
   delete(id: string): Promise<void>;
   getProcessingStatus(ownerId: string, videoId: string): Promise<VideoProcessingStatus | null>;
   getQueuedAttempt(videoId: string): Promise<number | null>;
-  retryProcessing(ownerId: string, videoId: string): Promise<number | null>;
+  retryProcessing(ownerId: string, videoId: string, staleBefore: Date): Promise<number | null>;
 }
 
 export class MongooseVideoRepository implements VideoRepository {
@@ -88,11 +88,22 @@ export class MongooseVideoRepository implements VideoRepository {
     return video?.processingAttempt ?? null;
   }
 
-  async retryProcessing(ownerId: string, videoId: string): Promise<number | null> {
+  async retryProcessing(ownerId: string, videoId: string, staleBefore: Date): Promise<number | null> {
     if (!Types.ObjectId.isValid(ownerId) || !Types.ObjectId.isValid(videoId)) return null;
     const now = new Date();
     const retried = await Video.findOneAndUpdate(
-      { _id: videoId, owner: ownerId, uploadStatus: "uploaded", processingStatus: "failed" },
+      {
+        _id: videoId,
+        owner: ownerId,
+        uploadStatus: "uploaded",
+        $or: [
+          { processingStatus: "failed" },
+          {
+            processingStatus: { $in: ["probing", "transcoding", "packaging"] },
+            processingUpdatedAt: { $lte: staleBefore }
+          }
+        ]
+      },
       {
         $set: {
           processingStatus: "queued",

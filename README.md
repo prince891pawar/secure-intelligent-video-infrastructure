@@ -155,7 +155,7 @@ Supported upload API routes (all require the authenticated HttpOnly cookie and s
 
 ## Phase 4 asynchronous processing
 
-After upload verification, the Video document is atomically transitioned to `queued` with a processing attempt number. That MongoDB state is the durable outbox; BullMQ jobs use a deterministic video/attempt ID, retry with exponential backoff, and are reconciled by the worker after restart. A failed job can be retried by its owner via the API. Processing states are `queued`, `probing`, `transcoding`, `packaging`, `completed` and `failed`; upload success remains a separate state.
+After upload verification, the Video document is atomically transitioned to `queued` with a processing attempt number. That MongoDB state is the durable outbox; BullMQ jobs use a deterministic video/attempt ID, retry with exponential backoff, and are reconciled by the worker after restart. An owner can retry failed jobs or in-flight jobs that have been stale longer than `PROCESSING_MANUAL_RETRY_AFTER_MS` (30 minutes by default). Recovery increments the attempt to fence any late worker, clears only derived streaming metadata, and retains the original upload. Processing states are `queued`, `probing`, `transcoding`, `packaging`, `completed` and `failed`; upload success remains a separate state.
 
 The worker downloads the private original to a temporary directory, probes the actual streams with FFprobe, then creates only configured heights supported by the source (default 1080/720/480/360/240). A source below 240p is encoded at its own source height, never upscaled. It verifies output probes and byte sizes before uploading versioned, private rendition keys; MongoDB is updated to completed only after all outputs are stored.
 
